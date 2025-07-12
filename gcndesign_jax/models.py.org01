@@ -1,0 +1,321 @@
+import jax
+import jax.numpy as jnp
+from jax import random
+from flax import linen as nn
+from .hypara import HyperParam
+## ResBlock with InstanceNormalization (re-included for completeness)
+class ResBlock_InstanceNorm(nn.Module):
+    d_in: int
+    d_out: int
+    dropout_rate: float = 0.2
+
+    @nn.compact
+    def __call__(self, x, train: bool):
+        # Layer 1
+        x_bn1 = nn.InstanceNorm(param_dtype=jnp.float32, name='bn1')(x)
+        x_relu1 = nn.relu(x_bn1)
+        x_conv1 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='VALID',
+                          name='conv1',
+                          kernel_init=nn.initializers.kaiming_normal(),
+                          bias_init=nn.initializers.zeros)(x_relu1) # (1,) for 1D conv
+
+        # Layer 2
+        x_bn2 = nn.InstanceNorm(param_dtype=jnp.float32, name='bn2')(x_conv1)
+        x_relu2 = nn.relu(x_bn2)
+        x_dropout2 = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x_relu2)
+        x_conv2 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='VALID',
+                          name='conv2',
+                          kernel_init=nn.initializers.kaiming_normal(),
+                          bias_init=nn.initializers.zeros)(x_dropout2)
+
+        # Shortcut
+        shortcut_out = x
+        if self.d_in != self.d_out:
+            shortcut_out = nn.InstanceNorm(param_dtype=jnp.float32, name='shortcut_bn')(shortcut_out)
+            shortcut_out = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='VALID',
+                                   name='shortcut_conv',
+                                   kernel_init=nn.initializers.kaiming_normal(),
+                                   bias_init=nn.initializers.zeros)(shortcut_out)
+        
+        return x_conv2 + shortcut_out
+
+
+## ResBlock with BatchNormalization (re-included for completeness)
+class ResBlock_BatchNorm(nn.Module):
+    d_in: int
+    d_out: int
+    dropout_rate: float = 0.2
+
+    @nn.compact
+    def __call__(self, x, train: bool):
+        # Layer 1
+        x_bn1 = nn.BatchNorm(param_dtype=jnp.float32, name='bn1')(x)
+        x_relu1 = nn.relu(x_bn1)
+        x_conv1 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='VALID',
+                          name='conv1',
+                          kernel_init=nn.initializers.kaiming_normal(),
+                          bias_init=nn.initializers.zeros)(x_relu1)
+
+        # Layer 2
+        x_bn2 = nn.BatchNorm(param_dtype=jnp.float32, name='bn2')(x_conv1)
+        x_relu2 = nn.relu(x_bn2)
+        x_dropout2 = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x_relu2)
+        x_conv2 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='VALID',
+                          name='conv2',
+                          kernel_init=nn.initializers.kaiming_normal(),
+                          bias_init=nn.initializers.zeros)(x_dropout2)
+
+        # Shortcut
+        shortcut_out = x
+        if self.d_in != self.d_out:
+            shortcut_out = nn.BatchNorm(param_dtype=jnp.float32, name='shortcut_bn')(shortcut_out)
+            shortcut_out = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='VALID',
+                                   name='shortcut_conv',
+                                   kernel_init=nn.initializers.kaiming_normal(),
+                                   bias_init=nn.initializers.zeros)(shortcut_out)
+        
+        return x_conv2 + shortcut_out
+
+
+# In gcn_design_jax/models.py, replace the RGCBlock class with this:
+
+class RGCBlock(nn.Module):
+    d_in: int
+    d_out: int
+    d_edge_in: int
+    d_edge_out: int
+    nneighbor: int
+    d_hidden_node: int
+    d_hidden_edge: int
+    nlayer_node: int
+    nlayer_edge: int
+    dropout: float
+
+    @nn.compact
+    def __call__(self, x, edgevec, adjmat, training: bool):
+        # x shape: (naa, d_in_current)
+        # edgevec shape: (naa, nneighbor, d_edge_in_current)
+        # adjmat shape: (naa, nneighbor)
+        naa = x.shape[0]
+        d_in_current = x.shape[-1]  # Get the current feature dimension of x
+        k_node = self.d_out - self.d_in
+        k_edge = self.d_edge_out - self.d_edge_in
+
+        # Get target node features. result shape: (naa, nneighbor, d_in_current)
+        node_trg = x[adjmat]
+
+        # --- Corrected Broadcasting ---
+        # Get source node features.
+        node_src = jnp.expand_dims(x, axis=1)
+        # Use the *actual* current feature dimension (d_in_current) for the target shape.
+        node_src = jnp.broadcast_to(node_src, (naa, self.nneighbor, d_in_current))
+        # --- End Correction ---
+
+        if self.nlayer_edge > 0 and k_edge > 0:
+            nen = jnp.concatenate([node_src, edgevec, node_trg], axis=-1)
+            
+            nen_out = nn.Conv(features=self.d_hidden_edge, kernel_size=(1,))(nen)
+            for _ in range(self.nlayer_edge):
+                nen_out = ResBlock_BatchNorm(d_out=self.d_hidden_edge, dropout=self.dropout)(nen_out, training=training)
+            nen_out = ResBlock_BatchNorm(d_out=k_edge, dropout=self.dropout)(nen_out, training=training)
+            nen_out = nn.BatchNorm(use_running_average=not training)(nen_out)
+            nen_out = nn.relu(nen_out)
+
+            edgevec = jnp.concatenate([edgevec, nen_out], axis=-1)
+
+        nodeedge = jnp.concatenate([node_src, edgevec, node_trg], axis=-1)
+
+        encoded = nn.Conv(features=self.d_hidden_node, kernel_size=(1,))(nodeedge)
+        for _ in range(self.nlayer_node):
+            encoded = ResBlock_BatchNorm(d_out=self.d_hidden_node, dropout=self.dropout)(encoded, training=training)
+        encoded = nn.BatchNorm(use_running_average=not training)(encoded)
+        encoded = nn.relu(encoded)
+        
+        aggregated = jnp.sum(encoded, axis=1)
+
+        residual = aggregated
+        for _ in range(self.nlayer_node):
+            residual_expanded = jnp.expand_dims(residual, axis=1)
+            residual = ResBlock_BatchNorm(d_out=self.d_hidden_node, dropout=self.dropout)(residual_expanded, training).squeeze(axis=1)
+        
+        residual_expanded = jnp.expand_dims(residual, axis=1)
+        residual = ResBlock_BatchNorm(d_out=k_node, dropout=self.dropout)(residual_expanded, training).squeeze(axis=1)
+        
+        residual = nn.BatchNorm(use_running_average=not training)(residual)
+        residual = nn.relu(residual)
+        
+        out = jnp.concatenate([x, residual], axis=-1)
+        return out, edgevec
+
+## Embedding module
+class Embedding_module(nn.Module):
+    nneighbor: int
+    r_drop: float
+    d_node0: int
+    d_hidden_node0: int
+    nlayer_node0: int
+    d_hidden_node: int
+    d_hidden_edge: int
+    nlayer_node: int
+    nlayer_edge: int
+    niter_rgc: int
+    k_node_rgc: int
+    k_edge_rgc: int
+    fragment_size: int
+
+    d_node_in: int = 6 # fix (sin(phi), cos(phi), sin(psi), cos(psi), sin(ome), cos(ome))
+    d_edge_in: int = 36 # fix (matrix; 6 atoms x 6 atoms)
+
+    @nn.compact
+    def __call__(self, node_in, edgemat_in, adjmat_in, train: bool):
+        naa = node_in.shape[0]
+
+        assert (self.fragment_size - 1) % 4 == 0
+        kernel_size = int((self.fragment_size - 1) / 2 + 1)
+        padding = int((kernel_size - 1) / 2)
+        
+        current_k_edge_rgc = self.k_edge_rgc
+        if self.nlayer_edge < 1:
+            current_k_edge_rgc = 0
+        
+        # Edge (prepare edgevec for RGCBlock)
+        #edge = edgemat_in[adjmat_in].reshape(naa, -1, self.d_edge_in) # (naa, nneighbor, d_edge_in)
+        edge = jax.vmap(lambda E_row, idx: E_row[idx], in_axes=(0,0))(edgemat_in, adjmat_in)
+
+        # Node embedding (initial 1D conv layers)
+        node = node_in.transpose(1, 0)[jnp.newaxis, ...] # Add batch dimension and transpose (1, features, sequence_length)
+
+        node = nn.Conv(features=self.d_hidden_node0,
+                       kernel_size=(kernel_size,),
+                       strides=(1,), padding='VALID',
+                       kernel_init=nn.initializers.kaiming_normal(),
+                       bias_init=nn.initializers.zeros)(node)
+
+        for _ in range(self.nlayer_node0):
+            node = ResBlock_InstanceNorm(d_in=self.d_hidden_node0, d_out=self.d_hidden_node0, dropout_rate=self.r_drop)(node, train)
+        node = ResBlock_InstanceNorm(d_in=self.d_hidden_node0, d_out=self.d_node0, dropout_rate=self.r_drop)(node, train)
+        node = nn.InstanceNorm(param_dtype=jnp.float32)(node)
+        node = nn.relu(node)
+        
+        node = jnp.squeeze(node, axis=0).transpose(1, 0) # Remove batch dimension and transpose back (sequence_length, features)
+
+        # Graph Convolution iterations
+        for i in range(self.niter_rgc):
+            node, edge = RGCBlock(d_in=self.d_node0 + self.k_node_rgc * i,
+                                  d_out=self.d_node0 + self.k_node_rgc * (i + 1),
+                                  d_edge_in=self.d_edge_in + current_k_edge_rgc * i,
+                                  d_edge_out=self.d_edge_in + current_k_edge_rgc * (i + 1),
+                                  nneighbor=self.nneighbor,
+                                  d_hidden_node=self.d_hidden_node,
+                                  d_hidden_edge=self.d_hidden_edge,
+                                  nlayer_node=self.nlayer_node,
+                                  nlayer_edge=self.nlayer_edge,
+                                  dropout=self.r_drop)(node, edge, adjmat_in, train)
+        return node, edge
+
+
+
+## Prediction module (Iterative 1D convolution)
+class Prediction_module(nn.Module):
+    d_in: int
+    d_out: int
+    d_hidden1: int
+    d_hidden2: int
+    nlayer_pred: int
+    fragment_size: int
+    r_drop: float
+
+    @nn.compact
+    def __call__(self, node_in, train: bool):
+        assert (self.fragment_size - 1) % 4 == 0
+        stride = 1
+        kernel_size = int((self.fragment_size - 1) / 2 + 1)
+        padding = int((kernel_size - 1) / 2)
+
+        node_out = node_in.transpose(1, 0)[jnp.newaxis, ...] # Add batch dim and transpose
+
+        # First set of conv layers
+        node_out = nn.Conv(features=self.d_hidden1, kernel_size=(kernel_size,), strides=(stride,), padding='VALID',
+                           kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(node_out)
+        for _ in range(self.nlayer_pred):
+            node_out = ResBlock_InstanceNorm(d_in=self.d_hidden1, d_out=self.d_hidden1, dropout_rate=self.r_drop)(node_out, train)
+        node_out = nn.InstanceNorm(param_dtype=jnp.float32)(node_out)
+        node_out = nn.relu(node_out)
+
+        # Second set of conv layers
+        node_out = nn.Conv(features=self.d_hidden2, kernel_size=(kernel_size,), strides=(stride,), padding='VALID',
+                           kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(node_out)
+        for _ in range(self.nlayer_pred):
+            node_out = ResBlock_InstanceNorm(d_in=self.d_hidden2, d_out=self.d_hidden2, dropout_rate=self.r_drop)(node_out, train)
+        node_out = nn.InstanceNorm(param_dtype=jnp.float32)(node_out)
+        node_out = nn.relu(node_out)
+
+        # Final prediction layer
+        node_out = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='VALID',
+                           kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(node_out)
+        
+        node_out = jnp.squeeze(node_out, axis=0).transpose(1, 0)
+        return node_out
+
+
+## Main module
+class GCNdesign(nn.Module):
+    hypara: HyperParam
+
+    @nn.compact
+    def __call__(self, node_in, edgemat_in, adjmat_in, train: bool):
+        # Embedding module
+        latent, _ = Embedding_module(nneighbor=self.hypara.nneighbor,
+                                     r_drop=self.hypara.r_drop,
+                                     d_node0=self.hypara.d_embed_node0,
+                                     fragment_size=self.hypara.fragment_size0,
+                                     d_hidden_node0=self.hypara.d_embed_h_node0,
+                                     nlayer_node0=self.hypara.nlayer_embed_node0,
+                                     d_hidden_node=self.hypara.d_embed_h_node,
+                                     d_hidden_edge=self.hypara.d_embed_h_edge,
+                                     nlayer_node=self.hypara.nlayer_embed_node,
+                                     nlayer_edge=self.hypara.nlayer_embed_edge,
+                                     k_node_rgc=self.hypara.k_node_rgc,
+                                     k_edge_rgc=self.hypara.k_edge_rgc,
+                                     niter_rgc=self.hypara.niter_embed_rgc)(node_in, edgemat_in, adjmat_in, train)
+        
+        # Prediction module
+        out = Prediction_module(d_in=self.hypara.d_embed_node0 + self.hypara.k_node_rgc * self.hypara.niter_embed_rgc,
+                                d_out=self.hypara.d_pred_out,
+                                r_drop=self.hypara.r_drop,
+                                d_hidden1=self.hypara.d_pred_h1,
+                                d_hidden2=self.hypara.d_pred_h2,
+                                nlayer_pred=self.hypara.nlayer_pred,
+                                fragment_size=self.hypara.fragment_size)(latent, train)
+        return out
+
+    # The size() method to count parameters is typically handled differently in JAX/Flax.
+    # You would usually get the size of the `params` PyTree after initialization.
+    # For example: `jax.tree_util.tree_reduce(lambda x, y: x + y.size, params, 0)`
+
+    def get_embedding(self, node_in, edgemat_in, adjmat_in, train: bool):
+        return Embedding_module(nneighbor=self.hypara.nneighbor,
+                                 r_drop=self.hypara.r_drop,
+                                 d_node0=self.hypara.d_embed_node0,
+                                 fragment_size=self.hypara.fragment_size0,
+                                 d_hidden_node0=self.hypara.d_embed_h_node0,
+                                 nlayer_node0=self.hypara.nlayer_embed_node0,
+                                 d_hidden_node=self.hypara.d_embed_h_node,
+                                 d_hidden_edge=self.hypara.d_embed_h_edge,
+                                 nlayer_node=self.hypara.nlayer_embed_node,
+                                 nlayer_edge=self.hypara.nlayer_embed_edge,
+                                 k_node_rgc=self.hypara.k_node_rgc,
+                                 k_edge_rgc=self.hypara.k_edge_rgc,
+                                 niter_rgc=self.hypara.niter_embed_rgc)(node_in, edgemat_in, adjmat_in, train)
+
+    # This method relies on pdb2input, which is external.
+    # Ensure pdb2input is JAX-compatible or port it as well.
+    def process_pdbfile(self, pdbfile, require_all=False):
+        # Placeholder: This function depends on `pdb2input`, which needs to be JAX-compatible.
+        # If `pdb2input` uses PyTorch tensors or operations, it will need to be re-written
+        # to use JAX/NumPy.
+        node, edgemat, adjmat, label, mask, res = pdb2input(pdbfile)
+        if require_all:
+            return node, edgemat, adjmat, label, mask, res
+        else:
+            return node, edgemat, adjmat
