@@ -2,7 +2,8 @@ import numpy as np
 import jax.numpy as jnp
 from .pdbutil import ProteinBackbone as pdb
 from .hypara import HyperParam
-
+#from jax import device_put
+import jax
 # Int code of amino-acid types
 mapped = {
     'A': 0, 'C': 1, 'D': 2, 'E': 3, 'F': 4,
@@ -82,12 +83,12 @@ def pdb2input_jax(filename: str, hypara: HyperParam):
     mask = mask & (label != 20)
 
     # Convert to JAX arrays
-    node     = jnp.array(node)
-    edgemat  = jnp.array(edgemat)
+    node     = jax.device_put(jnp.array(node))
+    edgemat  = jax.device_put(jnp.array(edgemat))
     # adjacency as indices
-    adjmat   = jnp.array(adjmat)
-    mask     = jnp.array(mask)
-    label    = jnp.array(label)
+    adjmat   = jax.device_put(jnp.array(adjmat))
+    mask     = jax.device_put(jnp.array(mask))
+    label    = jax.device_put(jnp.array(label))
 
     return node, edgemat, adjmat, label, mask, aa1
 

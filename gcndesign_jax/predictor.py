@@ -13,7 +13,7 @@ from .models import GCNdesign
 from .dataset import pdb2input_jax, add_margin_jax
 from .pdbutil import ProteinBackbone # Assumed to be framework-agnostic
 
-# --- Constants (unchanged) ---
+# --- Constandts (unchanged) ---
 i2aa = ('A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L',
         'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y')
 aa2i = {aa: i for i, aa in enumerate(i2aa)}
@@ -34,6 +34,11 @@ def eliminate_restype(prob, unused_aas):
 
 # --- Ported Predictor Class ---
 
+#@jax.jit(static_argnames=["train"])
+def run_model(params, node_p, edge_flat, adjmat_p, train):
+    return GCNdesign(hypara=HyperParam()).apply(params, node_p, edge_flat, adjmat_p, train=train, mutable=["batch_stats"])
+run_model = jax.jit(run_model, static_argnames=["train"])
+
 class PredictorJax():
     def __init__(self, param: str = None, hypara: HyperParam = None, load_state: bool = True, save_state: bool = False):
         """
@@ -48,13 +53,14 @@ class PredictorJax():
         # --- Model and Parameter Loading ---
         assert path.isfile(self.param), f"JAX parameter file not found: {self.param}"
         
-        # 1. Instantiate the model
-        self.model = GCNdesign(hypara=self.hypara)
+        # 1. Instantiate the model       
         if load_state:
+            self.model = None
             param_path = "gcndesign_jax/params/param_default_jax_variable.msgpack"
             with open(param_path, "rb") as f:
-                self.variables = from_bytes(None, f.read())  # ← NO scaffold needed
+                self.variables = jax.device_put(from_bytes(None, f.read()))  # ← NO scaffold needed
         else:
+            self.model = GCNdesign(hypara=self.hypara)
             N = 62  # arbitrary small number of nodes
             node_dim = 6
             edge_dim = 36
@@ -92,9 +98,15 @@ class PredictorJax():
             node, edgemat, adjmat, label, mask, self.hypara.nneighbor
         )
         
+        adj = adjmat_p.squeeze(-1)  # (L, L) boolean                                                                                                       
+        edge_flat = edgemat_p[adj]
+    
         # Prediction using model.apply with loaded variables
         # The [1:-1] slice removes the margins, same as the original code
-        outputs, latent = self.model.apply(self.variables, node_p, edgemat_p, adjmat_p, train=False)        
+        if self.model is not None:
+            outputs, latent = self.model.apply(self.variables, node_p, edge_flat, adjmat_p, train=False)        
+        else:
+            ((outputs, latent), batch_stats)  = run_model(self.variables, node_p, edge_flat, adjmat_p, False)
         return outputs, aa1, latent
 
     def predict_logit_tensor(self, pdb: str, as_dict: bool = False):
@@ -116,12 +128,15 @@ class PredictorJax():
         id2org = [(int(v[1:]), v[0]) for v in pbb.iaa2org]
         
         logit, aa1, latent = self._pred_base(pdb)
+        print("executed")
         logit = logit[1:-1]
         latent = latent[1:-1]
+        #latent = latent[1:-1]
         # Convert logits to probabilities using JAX softmax
         prob = jax.nn.softmax(logit / temperature, axis=1)
+
         prob_np = np.array(prob) # Convert to NumPy array
-        
+        print("prob got")
         pdict = [dict(zip(i2aa, p)) for p in prob_np]
         return [(p, {'resnum': v[0], 'chain': v[1], 'original': a}) for p, v, a in zip(pdict, id2org, aa1)]
 

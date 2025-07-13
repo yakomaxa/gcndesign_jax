@@ -47,6 +47,7 @@ class ResBlock_InstanceNorm(nn.Module):
         x_bn2 = InstanceNorm(param_dtype=jnp.float32, name='bn2')(x_conv1)
         x_relu2 = nn.relu(x_bn2)
         x_dropout2 = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x_relu2)
+        #x_dropout2 = nn.Dropout(rate=self.dropout_rate, deterministic=)(x_relu2)
         x_conv2 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='SAME',
                           name='conv2', kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(x_dropout2)
         shortcut = x
@@ -167,23 +168,11 @@ class Embedding_module(nn.Module):
     d_edge_in: int = 36
 
     @nn.compact
-    def __call__(self, node_in, edgemat_in, adjmat_in, train: bool):
-        naa = node_in.shape[0]
+    def __call__(self, node_in, edge_flat, adjmat_in, train: bool):
+        L = node_in.shape[0]
         kernel_size = (self.fragment_size - 1) // 2 + 1
-
-        adj = adjmat_in.squeeze(-1)  # (L, L) boolean
-        L = edgemat_in.shape[0]
-        d_edge = edgemat_in.shape[-1]
-        
-        print("adj shape:", adj.shape)
-        print("adj dtype:", adj.dtype)
-        print("True counts per row:", adj.sum(axis=1))
-        # Sanity check
-        edge_flat = edgemat_in[adj]  # shape (L * nneighbor, d_edge)
-        print("edge_flat shape:", edge_flat.shape)
-        edge = edge_flat.reshape(L, self.nneighbor, d_edge)
-        #edge = edge_flat.reshape(L, -1, d_edge)
-
+        # Sanity check        
+        edge = edge_flat.reshape(L, self.nneighbor, self.d_edge_in)
 
         # initial conv: (1, L, d_node_in)
         node = node_in[None, ...]
@@ -225,9 +214,8 @@ class Embedding_module(nn.Module):
                 nlayer_edge=self.nlayer_edge,
                 dropout=self.r_drop
             )(node, edge, adjmat_in, train)
-
-
-        return node, edge
+        
+        return node, edge_flat
 
 class Prediction_module(nn.Module):
     d_in: int
@@ -264,7 +252,7 @@ class GCNdesign(nn.Module):
     hypara: HyperParam
 
     @nn.compact
-    def __call__(self, node_in, edgemat_in, adjmat_in, train: bool):
+    def __call__(self, node_in, edge_flat, adjmat_in, train: bool):
         latent, _ = Embedding_module(
             nneighbor=self.hypara.nneighbor,
             r_drop=self.hypara.r_drop,
@@ -279,7 +267,7 @@ class GCNdesign(nn.Module):
             niter_rgc=self.hypara.niter_embed_rgc,
             k_node_rgc=self.hypara.k_node_rgc,
             k_edge_rgc=self.hypara.k_edge_rgc
-        )(node_in, edgemat_in, adjmat_in, train)
+        )(node_in, edge_flat, adjmat_in, train)
         out = Prediction_module(
             d_in=self.hypara.d_embed_node0 + self.hypara.k_node_rgc * self.hypara.niter_embed_rgc,
             d_out=self.hypara.d_pred_out,
