@@ -4,6 +4,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from flax import serialization
+from flax.serialization import from_bytes
+from flax.serialization import to_bytes
 
 # Assuming these JAX-ported modules are in the specified paths
 from .hypara import HyperParam
@@ -33,7 +35,7 @@ def eliminate_restype(prob, unused_aas):
 # --- Ported Predictor Class ---
 
 class PredictorJax():
-    def __init__(self, param: str = None, hypara: HyperParam = None):
+    def __init__(self, param: str = None, hypara: HyperParam = None, load_state: bool = True, save_state: bool = False):
         """
         Initializes the JAX Predictor.
 
@@ -43,34 +45,44 @@ class PredictorJax():
         """
         self.hypara = hypara if hypara else HyperParam()
         self.param = param if param else './gcndesign_jax/params/param_default_jax.msgpack'
-        
         # --- Model and Parameter Loading ---
         assert path.isfile(self.param), f"JAX parameter file not found: {self.param}"
         
         # 1. Instantiate the model
         self.model = GCNdesign(hypara=self.hypara)
-
-        # 2. Initialize a model scaffold with dummy data to get the structure
-        # NOTE: A placeholder PDB file must exist for this initialization step.
-        placeholder_pdb = "tmp.pdb"
-        if not os.path.exists(placeholder_pdb):
-            raise FileNotFoundError(
-                f"A placeholder PDB file '{placeholder_pdb}' is required to initialize the model structure."
+        if load_state:
+            param_path = "gcndesign_jax/params/param_default_jax_variable.msgpack"
+            with open(param_path, "rb") as f:
+                self.variables = from_bytes(None, f.read())  # ← NO scaffold needed
+        else:
+            N = 62  # arbitrary small number of nodes
+            node_dim = 6
+            edge_dim = 36
+        
+            # Dummy inputs matching original shapes/dtypes
+            node = jnp.ones((N, node_dim), dtype=jnp.float32)
+            edgemat = jnp.ones((N, N, edge_dim), dtype=jnp.float32)
+            adjmat1 = jnp.zeros((N, N-20, 1), dtype=jnp.bool_)
+            adjmat2 = jnp.ones((N, 20, 1), dtype=jnp.bool_)
+            adjmat = jnp.concatenate([adjmat1, adjmat2], axis=1)
+            label = jnp.ones((N,), dtype=jnp.int32)
+            mask = jnp.ones((N,), dtype=jnp.bool_)
+    
+            node_p, edgemat_p, adjmat_p, _, _ = add_margin_jax(
+                node, edgemat, adjmat, label, mask, self.hypara.nneighbor
             )
-            
-        node, edgemat, adjmat, label, mask, _ = pdb2input_jax(placeholder_pdb, self.hypara)
-        node_p, edgemat_p, adjmat_p, _, _ = add_margin_jax(
-            node, edgemat, adjmat, label, mask, self.hypara.nneighbor
-        )
-        key = jax.random.PRNGKey(0)
-        variables_scaffold = self.model.init(
-            {'params': key, 'dropout': key}, node_p, edgemat_p, adjmat_p, train=False
-        )
+            key = jax.random.PRNGKey(0)
+            variables_scaffold = self.model.init(
+                {'params': key, 'dropout': key}, node_p, edgemat_p, adjmat_p, train=False
+            )
 
-        # 3. Load the actual parameters from file into the scaffold
-        with open(self.param, 'rb') as f:
-            self.variables = serialization.from_bytes(variables_scaffold, f.read())
-        print("✅ JAX model and parameters loaded successfully.")
+            # 3. Load the actual parameters from file into the scaffold
+            with open(self.param, 'rb') as f:
+                self.variables = serialization.from_bytes(variables_scaffold, f.read())
+                print("✅ JAX model and parameters loaded successfully.")
+        if save_state:
+            with open("model_variables.msgpack", "wb") as f:
+                f.write(to_bytes(self.variables))
 
     def _pred_base(self, pdb: str):
         """Core prediction logic for a single PDB file."""

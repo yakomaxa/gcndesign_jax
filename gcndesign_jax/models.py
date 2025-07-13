@@ -174,17 +174,16 @@ class Embedding_module(nn.Module):
         adj = adjmat_in.squeeze(-1)  # (L, L) boolean
         L = edgemat_in.shape[0]
         d_edge = edgemat_in.shape[-1]
-
-        # Sanity check
-        nneighbor = adj.sum(axis=1).max()
-
-        edge_flat = edgemat_in[adj]  # shape (L * nneighbor, d_edge)
-        edge = edge_flat.reshape(L, nneighbor, d_edge)
-
+        
         print("adj shape:", adj.shape)
         print("adj dtype:", adj.dtype)
         print("True counts per row:", adj.sum(axis=1))
+        # Sanity check
+        edge_flat = edgemat_in[adj]  # shape (L * nneighbor, d_edge)
         print("edge_flat shape:", edge_flat.shape)
+        edge = edge_flat.reshape(L, self.nneighbor, d_edge)
+        #edge = edge_flat.reshape(L, -1, d_edge)
+
 
         # initial conv: (1, L, d_node_in)
         node = node_in[None, ...]

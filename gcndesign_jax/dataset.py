@@ -62,7 +62,7 @@ def pdb2input_jax(filename: str, hypara: HyperParam):
     # Edge features & adjacency
     edgemat = np.zeros((L, L, 36), dtype=np.float32)
     nn_idx = bb.get_nearestN(hypara.nneighbor, atomtype='CB')  # (L, nneighbor)
-    adjmat = np.zeros((L,L,1), dtype=np.bool)
+    adjmat = np.zeros((L,L,1), dtype=bool)
     for i in range(L):
         adjmat[i,nn_idx[i]] = True
         if not mask[i]:
