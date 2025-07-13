@@ -4,6 +4,34 @@ from jax import random
 from flax import linen as nn
 from .hypara import HyperParam
 
+from flax import linen as nn
+import jax.numpy as jnp
+from typing import Any
+
+class InstanceNorm(nn.Module):
+    epsilon: float = 1e-5
+    use_scale: bool = True
+    use_bias: bool = True
+    param_dtype: Any = jnp.float32  # <<< added dtype
+    dtype: Any = jnp.float32
+    @nn.compact
+    def __call__(self, x):
+        x = jnp.asarray(x, self.dtype)
+
+        mean = jnp.mean(x, axis=tuple(range(1, x.ndim - 1)), keepdims=True)
+        var = jnp.var(x, axis=tuple(range(1, x.ndim - 1)), keepdims=True)
+        x_norm = (x - mean) / jnp.sqrt(var + self.epsilon)
+
+        if self.use_scale:
+            scale = self.param('scale', nn.initializers.ones, (x.shape[-1],), self.dtype)
+            x_norm *= scale.reshape((1,) * (x.ndim - 1) + (-1,))
+        if self.use_bias:
+            bias = self.param('bias', nn.initializers.zeros, (x.shape[-1],), self.dtype)
+            x_norm += bias.reshape((1,) * (x.ndim - 1) + (-1,))
+
+        return x_norm
+
+
 ## ResBlock with InstanceNormalization
 class ResBlock_InstanceNorm(nn.Module):
     d_in: int
@@ -12,18 +40,18 @@ class ResBlock_InstanceNorm(nn.Module):
 
     @nn.compact
     def __call__(self, x, train: bool):
-        x_bn1 = nn.InstanceNorm(param_dtype=jnp.float32, name='bn1')(x)
+        x_bn1 = InstanceNorm(param_dtype=jnp.float32, name='bn1')(x)
         x_relu1 = nn.relu(x_bn1)
         x_conv1 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='SAME',
                           name='conv1', kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(x_relu1)
-        x_bn2 = nn.InstanceNorm(param_dtype=jnp.float32, name='bn2')(x_conv1)
+        x_bn2 = InstanceNorm(param_dtype=jnp.float32, name='bn2')(x_conv1)
         x_relu2 = nn.relu(x_bn2)
         x_dropout2 = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x_relu2)
         x_conv2 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='SAME',
                           name='conv2', kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(x_dropout2)
         shortcut = x
         if self.d_in != self.d_out:
-            shortcut = nn.InstanceNorm(param_dtype=jnp.float32, name='shortcut_bn')(shortcut)
+            shortcut = InstanceNorm(param_dtype=jnp.float32, name='shortcut_bn')(shortcut)
             shortcut = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='SAME',
                                name='shortcut_conv', kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(shortcut)
         return x_conv2 + shortcut
@@ -180,7 +208,7 @@ class Embedding_module(nn.Module):
 
 
 
-        node = nn.InstanceNorm(param_dtype=jnp.float32)(node)
+        node = InstanceNorm(param_dtype=jnp.float32)(node)
         node = nn.relu(node)
         node = node.squeeze()
        # print("e",node.shape)
@@ -220,14 +248,14 @@ class Prediction_module(nn.Module):
         for _ in range(self.nlayer_pred):
             node = ResBlock_InstanceNorm(d_in=self.d_hidden1, d_out=self.d_hidden1,
                                          dropout_rate=self.r_drop)(node, train)
-        node = nn.InstanceNorm(param_dtype=jnp.float32)(node)
+        node = InstanceNorm(param_dtype=jnp.float32)(node)
         node = nn.relu(node)
         node = nn.Conv(features=self.d_hidden2, kernel_size=(kernel_size,), padding='SAME',
                        kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(node)
         for _ in range(self.nlayer_pred):
             node = ResBlock_InstanceNorm(d_in=self.d_hidden2, d_out=self.d_hidden2,
                                          dropout_rate=self.r_drop)(node, train)
-        node = nn.InstanceNorm(param_dtype=jnp.float32)(node)
+        node = InstanceNorm(param_dtype=jnp.float32)(node)
         node = nn.relu(node)
         node = nn.Conv(features=self.d_out, kernel_size=(1,), padding='SAME',
                        kernel_init=nn.initializers.kaiming_normal(), bias_init=nn.initializers.zeros)(node)
