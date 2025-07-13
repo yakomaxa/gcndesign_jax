@@ -37,6 +37,7 @@ def eliminate_restype(prob, unused_aas):
 #@jax.jit(static_argnames=["train"])
 def run_model(params, node_p, edge_flat, adjmat_p, train):
     return GCNdesign(hypara=HyperParam()).apply(params, node_p, edge_flat, adjmat_p, train=train, mutable=["batch_stats"])
+    #return GCNdesign(hypara=HyperParam()).apply(params, node_p, edge_flat, adjmat_p, train=train)
 run_model = jax.jit(run_model, static_argnames=["train"])
 
 class PredictorJax():
@@ -106,7 +107,11 @@ class PredictorJax():
         if self.model is not None:
             outputs, latent = self.model.apply(self.variables, node_p, edge_flat, adjmat_p, train=False)        
         else:
-            ((outputs, latent), batch_stats)  = run_model(self.variables, node_p, edge_flat, adjmat_p, False)
+            #((outputs, latent), batch_stats)  = run_model(self.variables, node_p, edge_flat, adjmat_p, False)
+            ((outputs, latent), _)  = run_model(self.variables, node_p, edge_flat, adjmat_p, False)
+            outputs.block_until_ready()
+            latent.block_until_ready()
+            print("run_model done")
         return outputs, aa1, latent
 
     def predict_logit_tensor(self, pdb: str, as_dict: bool = False):
@@ -119,7 +124,7 @@ class PredictorJax():
         if as_dict:
             return [dict(zip(i2aa, l)) for l in logit_np]
         return logit_np
-
+    
     def predict(self, pdb: str, temperature: float = 1.0):
         """Predicts amino acid probabilities for each residue."""
         assert path.isfile(pdb), f"PDB file not found: {pdb}"
