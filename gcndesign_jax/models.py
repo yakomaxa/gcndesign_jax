@@ -16,7 +16,7 @@ class InstanceNorm(nn.Module):
     dtype: Any = jnp.float32
     @nn.compact
     def __call__(self, x):
-        print("InstanceNorm")
+        jax.debug.print("InstanceNorm")
         x = jnp.asarray(x, self.dtype)
 
         mean = jnp.mean(x, axis=tuple(range(1, x.ndim - 1)), keepdims=True)
@@ -41,7 +41,7 @@ class ResBlock_InstanceNorm(nn.Module):
 
     @nn.compact
     def __call__(self, x, train: bool):
-        print("ResBlock_IN")
+        jax.debug.print("ResBlock_IN")
         x_bn1 = InstanceNorm(param_dtype=jnp.float32, name='bn1')(x)
         x_relu1 = nn.relu(x_bn1)
         x_conv1 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='SAME',
@@ -67,7 +67,7 @@ class ResBlock_BatchNorm(nn.Module):
 
     @nn.compact
     def __call__(self, x, train: bool):
-        print("ResBlock_BN")
+        jax.debug.print("ResBlock_BN")
         x_bn1 = nn.BatchNorm(param_dtype=jnp.float32, name='bn1', use_running_average=not train)(x)
         x_relu1 = nn.relu(x_bn1)
         x_conv1 = nn.Conv(features=self.d_out, kernel_size=(1,), strides=(1,), padding='SAME',
@@ -98,8 +98,8 @@ class RGCBlock(nn.Module):
 
     @nn.compact
     def __call__(self, x, edgevec, adjmat, training: bool):
-        print("RGCBloack")
-        print(edgevec.shape)
+        jax.debug.print("RGCBloack")
+        #jax.debug.print(edgevec.shape)
         L, d_in = x.shape
         k_node = self.d_out - self.d_in
         k_edge = self.d_edge_out - self.d_edge_in
@@ -107,7 +107,7 @@ class RGCBlock(nn.Module):
         adj_indices = jnp.argsort(~adj, axis=1)[:, :self.nneighbor]
         #nodetrg = jnp.take(x, adjmat, axis=0)  # shape: (L, nneighbor, d_in)
         nodetrg = jnp.take(x, adj_indices, axis=0)
-        print(nodetrg.shape)
+        #jax.debug.print(nodetrg.shape)
         #(166, 166, 1, 20)
         nodesrc = jnp.broadcast_to(x[:, None, :], (x.shape[0], self.nneighbor, self.d_in))
         # 2. Broadcast source node features (same shape as nodetrg)
@@ -173,7 +173,7 @@ class Embedding_module(nn.Module):
 
     @nn.compact
     def __call__(self, node_in, edge_flat, adjmat_in, train: bool):
-        print("Embedding_Module")
+        jax.debug.print("Embedding_Module")
         L = node_in.shape[0]
         kernel_size = (self.fragment_size - 1) // 2 + 1
         # Sanity check        
@@ -233,7 +233,7 @@ class Prediction_module(nn.Module):
 
     @nn.compact
     def __call__(self, node_in, train: bool):
-        print("Prediction_module")
+        jax.debug.print("Prediction_module")
         kernel_size = (self.fragment_size - 1) // 2 + 1
         node = node_in[None, ...]
         node = nn.Conv(features=self.d_hidden1, kernel_size=(kernel_size,), padding='SAME',
@@ -259,7 +259,7 @@ class GCNdesign(nn.Module):
 
     @nn.compact
     def __call__(self, node_in, edge_flat, adjmat_in, train: bool):
-        print("GCNdesign")
+        jax.debug.print("GCNdesign")
         latent, _ = Embedding_module(
             nneighbor=self.hypara.nneighbor,
             r_drop=self.hypara.r_drop,
@@ -284,7 +284,7 @@ class GCNdesign(nn.Module):
             nlayer_pred=self.hypara.nlayer_pred,
             fragment_size=self.hypara.fragment_size
         )(latent, train)
-        print("GCNdesign END")
+        jax.debug.print("GCNdesign END")
         return out, latent
 
     def process_pdbfile(self, pdbfile, require_all=False):

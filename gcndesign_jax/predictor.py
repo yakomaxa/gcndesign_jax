@@ -86,7 +86,7 @@ class PredictorJax():
             # 3. Load the actual parameters from file into the scaffold
             with open(self.param, 'rb') as f:
                 self.variables = serialization.from_bytes(variables_scaffold, f.read())
-                print("✅ JAX model and parameters loaded successfully.")
+                jax.debug.print("✅ JAX model and parameters loaded successfully.")
         if save_state:
             with open("model_variables.msgpack", "wb") as f:
                 f.write(to_bytes(self.variables))
@@ -111,7 +111,7 @@ class PredictorJax():
             ((outputs, latent), _)  = run_model(self.variables, node_p, edge_flat, adjmat_p, False)
             outputs.block_until_ready()
             latent.block_until_ready()
-            print("run_model done")
+            jax.debug.print("run_model done")
         return outputs, aa1, latent
 
     def predict_logit_tensor(self, pdb: str, as_dict: bool = False):
@@ -133,7 +133,7 @@ class PredictorJax():
         id2org = [(int(v[1:]), v[0]) for v in pbb.iaa2org]
         
         logit, aa1, latent = self._pred_base(pdb)
-        print("executed")
+        jax.debug.print("executed")
         logit = logit[1:-1]
         latent = latent[1:-1]
         #latent = latent[1:-1]
@@ -141,7 +141,7 @@ class PredictorJax():
         prob = jax.nn.softmax(logit / temperature, axis=1)
 
         prob_np = np.array(prob) # Convert to NumPy array
-        print("prob got")
+        jax.debug.print("prob got")
         pdict = [dict(zip(i2aa, p)) for p in prob_np]
         return [(p, {'resnum': v[0], 'chain': v[1], 'original': a}) for p, v, a in zip(pdict, id2org, aa1)]
 
