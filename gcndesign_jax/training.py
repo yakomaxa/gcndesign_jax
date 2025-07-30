@@ -166,10 +166,8 @@ def _preprocess_model_inputs(batch: Tuple) -> Tuple:
     return node_p, edge_flat, adjmat_p, target_p, mask_p
 
 
-# --- JAX Training, Validation, and Test Modules ---
-
-# Define the core training and evaluation steps, JIT-compiled for performance.
 from functools import partial
+
 @partial(jax.jit, static_argnames=['criterion', 'param_path', 'freeze_embedding'])
 def _train_step_jit(state: GCNTrainState,
                     node: jnp.ndarray,
@@ -182,7 +180,6 @@ def _train_step_jit(state: GCNTrainState,
                     param_path: Tuple[str, ...]) -> Tuple:
     dropout_key, new_key = jax.random.split(state.key)
 
-    print("Inside jit:", edge_flat.shape)
     def loss_fn(params):
         (logits, _), new_model_state = state.apply_fn(
             {'params': params, 'batch_stats': state.batch_stats},
@@ -191,12 +188,9 @@ def _train_step_jit(state: GCNTrainState,
             mutable=['batch_stats'],
             rngs={'dropout': dropout_key}
         )
-        masked_logits = logits#*mask
-        masked_target = target#*mask
-        loss = criterion(masked_logits, masked_target).mean()
-        #loss = criterion(logits[mask], target[mask]).mean()
-        #accuracy = jnp.mean(jnp.argmax(logits[mask], axis=-1) == target[mask])
-        accuracy = jnp.mean(jnp.argmax(logits, axis=-1) == target)
+        # Use mask to compute loss and accuracy
+        loss = jnp.sum(criterion(logits, target) * mask) / jnp.sum(mask)
+        accuracy = jnp.sum((jnp.argmax(logits, axis=-1) == target) * mask) / jnp.sum(mask)
         return loss, (accuracy, new_model_state['batch_stats'])
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
@@ -208,16 +202,15 @@ def _train_step_jit(state: GCNTrainState,
         for key in param_path[:-1]:
             grad_dict = grad_dict[key]
         grad_dict[param_path[-1]] = jax.tree_map(jnp.zeros_like, grad_dict[param_path[-1]])
+        grads = grads  # refreeze if needed
 
     state = state.apply_gradients(grads=grads)
     state = state.replace(batch_stats=new_batch_stats, key=new_key)
-    return state, loss, accuracy
+
+    return state, loss, accuracy  # ✅ Exactly 3 values
 
 def _train_step(state, batch, criterion, freeze_embedding, param_path):
     node_p, edge_flat, adjmat_p, target, mask = _preprocess_model_inputs(batch)
-    print(edge_flat.shape)
-    print(node_p.shape)
-    print(adjmat_p.shape)
     return _train_step_jit(state, node_p, edge_flat, adjmat_p, target, mask,
                            criterion, freeze_embedding, param_path)
 
