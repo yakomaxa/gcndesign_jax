@@ -1,10 +1,9 @@
 #! /usr/bin/env python
-
 import sys
+sys.path.append("/Users/sakuma/PycharmProjects/nothing/gcndesign_jax/")
 import argparse
 from os import path
-import pickle
-
+import os
 import jax
 import jax.numpy as jnp
 import optax
@@ -199,6 +198,7 @@ def main():
 
             # Save model parameters (like the original .pkl) and a full checkpoint
             # 1. Save parameters only
+            args.checkpoint_dir = os.path.abspath(args.checkpoint_dir)
             param_bytes = serialization.to_bytes(state.params)
             with open(f"{source.param_prefix}-{iepoch:03d}.msgpack", "wb") as f:
                 f.write(param_bytes)
