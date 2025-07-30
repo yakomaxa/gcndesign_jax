@@ -185,6 +185,7 @@ def main():
 
             # Training
             state, loss_train, acc_train = train_jax(state, criterion, train_loader(), hypara, source)
+            print(loss_train)
 
             # Validation
             loss_valid, acc_valid = valid_jax(state, criterion, valid_loader(), hypara)
