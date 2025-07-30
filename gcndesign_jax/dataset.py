@@ -4,6 +4,9 @@ from .pdbutil import ProteinBackbone as pdb
 from .hypara import HyperParam
 #from jax import device_put
 import jax
+from tqdm import tqdm
+from os import path
+import pickle
 # Int code of amino-acid types
 mapped = {
     'A': 0, 'C': 1, 'D': 2, 'E': 3, 'F': 4,
@@ -87,6 +90,7 @@ def pdb2input_jax(filename: str, hypara: HyperParam):
     edgemat  = jax.device_put(jnp.array(edgemat))
     # adjacency as indices
     adjmat   = jax.device_put(jnp.array(adjmat))
+    print(adjmat)
     mask     = jax.device_put(jnp.array(mask))
     label    = jax.device_put(jnp.array(label))
 
@@ -118,3 +122,50 @@ def add_margin_jax(node, edgemat, adjmat, label, mask, nneighbor):
 
     return node, edgemat, adjmat, label, mask
 
+class BBGDatasetJAX:
+    def __init__(self, listfile, hypara):
+        with open(listfile, 'r') as f:
+            self.list_samples = f.read().splitlines()
+        self.nneighbor = hypara.nneighbor
+
+    def __len__(self):
+        return len(self.list_samples)
+
+    def __getitem__(self, idx):
+        infile = self.list_samples[idx]
+
+        with open(infile, 'rb') as f:
+            node, edgemat, adjmat, label, mask, _ = pickle.load(f)
+
+        # Add margin (pads shape by 2 in first dim)
+        node, edgemat, adjmat, label, mask = add_margin_jax(
+            node, edgemat, adjmat, label, mask, self.nneighbor
+        )
+
+        print("NODE:", node.shape)
+        print("EDGE:", edgemat.shape)
+        print("ADJ :", adjmat.shape)
+
+        # ⚠️ No more dangerous np.squeeze() here — we preserve shapes:
+        # node     : (L+2, 6)
+        # edgemat  : (L+2, L+2, 36)
+        # adjmat   : (L+2, L+2, 1)
+        # label    : (L+2,)
+        # mask     : (L+2,)
+        return node, edgemat, adjmat, label, mask, infile
+
+##  Preprocessing
+def Preprocessing(file_list: str, dir_out: str='./', hypara=HyperParam()):
+    pdbs = open(file_list, 'r').read().splitlines()
+    count = 0
+    for pdb in tqdm(pdbs):
+        id = path.splitext(path.basename(pdb))[0]
+        infile = pdb
+        outfile = dir_out + '/' + id + '.pkl'
+        count = count + 1
+        node, edgemat, adjmat, label, mask, aa1 = pdb2input_jax(infile, hypara)
+        with open(outfile, 'wb') as f:
+            pickle.dump((node, edgemat, adjmat, label, mask, aa1), f)
+    print("\nPre-processing was completed.")
+    # return
+    return
