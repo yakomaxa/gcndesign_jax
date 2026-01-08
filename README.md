@@ -9,8 +9,7 @@ Porting GCNdesign into JAX makes it possible to train **conjugate models written
 
 ## Status
 
-This project is a work in progress.  
-APIs, directory structure, and training scripts may change without notice.
+This project is a work in progress. APIs, directory structure, and training scripts may change without notice.
 
 ## Scope
 
@@ -24,8 +23,7 @@ This repository does **not** currently include:
 
 ## Reproducibility
 
-Numerical differences between the PyTorch and JAX implementations may exist due to
-framework-specific behavior and precision differences.
+Numerical differences between the PyTorch and JAX implementations may exist due to framework-specific behavior and precision differences.
 
 ## Original PyTorch version
 
@@ -33,13 +31,11 @@ https://github.com/ShintaroMinami/GCNdesign
 
 ## Repository Contents
 
-The root directory currently contains a mixture of scripts used during the porting process and is not yet well organized.  
-This will be cleaned up as the JAX implementation stabilizes.
+The root directory currently contains a mixture of scripts used during the porting process and is not yet well organized. This will be cleaned up as the JAX implementation stabilizes.
 
 ## License
 
-MIT License, following the original version.  
-See the `LICENSE` files in this repository for details.
+MIT License, following the original version. See the `LICENSE` files in this repository for details.
 
 ## TODO
 
@@ -52,5 +48,4 @@ See the `LICENSE` files in this repository for details.
 
 This repository is intended for researchers and developers familiar with protein design models and the JAX ecosystem.
 
-Note that the developer (K.S.) is not a native JAX user, so some implementations may not follow best JAX practices (or even good ones).  
-Comments, suggestions, and improvements are very welcome.
+Note that the developer (K.S.) is not a native JAX user, so some implementations may not follow best JAX practices (or even good ones). Comments, suggestions, and improvements are very welcome.
