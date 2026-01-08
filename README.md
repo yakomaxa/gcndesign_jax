@@ -39,6 +39,7 @@ MIT License, following the original version. See the `LICENSE` files in this rep
 
 ## TODO
 
+- [ ] Layer-wise checks against the PyTorch implementation  
 - [ ] Clean up repository structure  
 - [ ] Add training scripts in JAX  
 - [ ] Validate outputs against the PyTorch implementation  
