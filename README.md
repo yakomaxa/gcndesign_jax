@@ -45,6 +45,11 @@ MIT License, following the original version. See the `LICENSE` files in this rep
 - [ ] Validate outputs against the PyTorch implementation  
 - [ ] Document integration with other JAX protein models
 
+
+## Logs
+
+Made public: 2026 Mar. 14th
+
 ## Intended Audience
 
 This repository is intended for researchers and developers familiar with protein design models and the JAX ecosystem.
